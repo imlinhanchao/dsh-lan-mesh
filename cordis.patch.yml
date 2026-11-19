@@ -1,0 +1,17 @@
+# dsh-lan-mesh bundle patch: mounts the LAN peer mesh into a profile.
+#
+# Per-machine settings are read from this row's `config`; override it in
+# <DSH_HOME>/profiles/<profile>/cordis.patch.yml, for example:
+#
+#   - id: lan-mesh
+#     name: dsh-lan-mesh
+#     config:
+#       name: mac-mini
+#       token: the-same-long-secret-on-every-machine
+#
+# Without a config row the plugin still works: it uses the host name as the
+# peer name, port 7317, UDP discovery on 7318, and a token from DSH_LAN_TOKEN
+# or from <DSH_HOME>/lan-mesh/token (generated on first run).
+- insert:
+    - id: lan-mesh
+      name: dsh-lan-mesh

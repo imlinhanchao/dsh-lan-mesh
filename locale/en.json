@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "LAN mesh peers",
+    "description": "Lets the DeepSeek Harness agents on your home-network computers see each other and delegate tasks across machines, so a task that needs macOS, Windows, or a specific configuration can run on that machine's own DSH."
+  }
+}

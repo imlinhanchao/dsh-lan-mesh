@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "内网 DSH 互联",
+    "description": "让家里内网各台电脑上的 DeepSeek Harness 互相发现，并把需要 macOS、Windows 或某台机器特有配置的任务交给那台机器上的 DSH 作为子代理处理。"
+  }
+}
