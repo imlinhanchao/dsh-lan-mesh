@@ -19,7 +19,8 @@ There is no cloud service and no account. Everything stays on your LAN: one bund
 | Discovery | UDP broadcast **7318** (`discoveryPort`), one beacon every 5 s |
 | Authentication | Shared bearer token; only `GET /v1/ping` is unauthenticated |
 | Transport | Plain HTTP + JSON on the LAN (no TLS) |
-| Architecture | Peer-to-peer; no relay, no server, no account, no GUI panel |
+| Architecture | Peer-to-peer; no relay, no server, no account |
+| Settings | Peer name, shared token and the `lan_exec` switch are editable on the bundle's Plugins page |
 | Receiving machine | Must run a Web or Desktop DSH profile for `lan_delegate` |
 | Tools added | `lan_peers`, `lan_delegate`, `lan_result`, `lan_exec` |
 
@@ -30,7 +31,7 @@ There is no cloud service and no account. Everything stays on your LAN: one bund
 - **Returns the final answer.** When the remote agent goes idle (including any subagents it started), the last assistant text and the turn's stop reason are sent back to the caller.
 - **Runs raw commands.** `POST /v1/exec` runs one shell command on the peer with the peer user's permissions and returns exit code, stdout and stderr. Useful for quick capability probes.
 - **Tells the model what is available.** While at least one peer is online, the plugin adds one short line to the system prompt listing those peers, so the model knows delegation is possible. With no peers the contribution is empty and costs nothing.
-- **Works on macOS, Windows and Linux.** It imports no `@deepseek-ai/*` package and no third-party module, only Node built-ins that ship with DSH.
+- **Works on macOS, Windows and Linux.** It imports no third-party module and only Node built-ins that ship with DSH. Its one optional `@deepseek-ai` import is the Host's own `schemastery`, used solely to expose the settings form; when that package cannot be resolved the plugin loads unchanged and simply has no form.
 
 ## What it does not do
 
@@ -42,7 +43,7 @@ This is deliberately a small peer mesh, not a remote-access product:
 - **No `/lan` chat command.** The local model calls the four tools; you talk to it normally.
 - **No remote desktop, no screen control.**
 - **No file-transfer tool.** A remote agent can read and write files on its own machine and report text back; there is no file sync between machines. (You can still run `scp`/`rsync` through `lan_exec` yourself.)
-- **No GUI panel or settings page.** This version is Host-only: configure it in the profile YAML.
+- **No full settings surface.** Only three fields — peer name, shared token, and the `lan_exec` switch — are editable on the bundle's page in the Plugins sidebar. Ports, discovery, static peers and timeouts stay in the profile YAML.
 - **No shared conversation.** The remote agent cannot see the caller's context, history or files; the task must be self-contained.
 - **No cancellation tool and no queue.** There is no tool to cancel a running remote turn, and completed run records live only in memory (kept for 2 hours, at most 100, gone after a restart).
 - **No approval bypass.** The peer's own approval policy still applies. If a delegated task needs an approval that nobody answers, it stalls on the peer.
@@ -123,7 +124,9 @@ Get-Content (Join-Path $(if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $
 
 Copy that string to every other machine — either into the same token file (macOS/Linux: `mkdir -p`, `printf '%s\n' '<token>' > ...`, `chmod 600`; Windows: `Set-Content -NoNewline`), or set it as the config `token` or the `DSH_LAN_TOKEN` environment variable. All three are covered in [docs/SETUP.md](docs/SETUP.md#step-2-share-one-token).
 
-**5. Restart DSH on the machines whose token changed.** The token is read once at startup.
+**5. Restart DSH on the machines whose token changed.** The token is read once at plugin start.
+
+> Tip (Web/Desktop with HMR): if you only want to pick up a changed token or a changed `name`, you do not have to restart the whole app. Add or edit a `lan-mesh` row override in the profile's `cordis.patch.yml` (see [Configuration](#configuration)) — saving it hot-reloads the plugin, which re-reads the token file, and the peer re-announces under the new name within a few seconds.
 
 **6. Verify.** On each machine:
 
@@ -192,6 +195,22 @@ The shared token is taken from the first source that is non-empty:
 4. In memory only — a random token, with a warning, if the file cannot be written. Peers cannot authenticate until you configure one of the persistent sources.
 
 Each machine generates its own token on first run, so a fresh installation will **not** authenticate across machines until you copy one token everywhere (the exception is a static peer entry with its own `token`, which is used for every call to that peer). The `lan_peers` output prints each machine's partial token fingerprint (`sha256(token)` first 16 hex characters) so you can compare without revealing the token.
+
+### Settings page (Plugins sidebar)
+
+The fastest way to configure a machine is the bundle's page in the Web/Desktop GUI: open **Plugins** in the sidebar, open **LAN mesh peers** under **Installed plugins**, and press **Configure** on the `lan-mesh` row. The page warns that these values live in the profile's `cordis.patch.yml`.
+
+![The LAN mesh row settings page](docs/settings-page.png)
+
+| Field | Effect |
+|---|---|
+| Peer name | The name other machines see in `lan_peers`. Empty uses `DSH_LAN_NAME` or the host name. |
+| Shared token | The mesh secret. It overrides `DSH_LAN_TOKEN` and the token file; leaving it empty keeps those fallbacks. The page shows the token's 16-character fingerprint so two machines can be compared without revealing it. |
+| Allow remote shell commands | Turns `/v1/exec` (`lan_exec`) on or off for this machine. Delegated tasks (`lan_delegate`) keep working either way. |
+
+These three fields are declared `.volatile()`, so **saving applies them immediately** — the peer re-announces under the new name and starts accepting the new token without a DSH restart. Everything else (ports, static peers, `discover`, `taskCwd`, `toolTimeoutMs`) is validated but belongs in the profile YAML, because changing ports has to rebind sockets.
+
+The form appears only when the Host can expose editable configuration (it needs its own `@deepseek-ai/schemastery`). Without it the page says so and points at the YAML.
 
 ### Environment variables
 
@@ -434,6 +453,7 @@ macOS shows an incoming-connections prompt for `node` the first time the server 
 | `agent=no` in `lan_peers` | The peer profile cannot host sessions. | Run that machine's DSH as Web/Desktop. |
 | The remote answer is empty | The remote agent produced no text (or the turn failed). | Check the peer session in its GUI; the result includes the stop reason/error. |
 | A renamed/readdressed machine appears twice | A peer's id is derived from name + host name + port; an old beacon lingers while offline. | The stale entry disappears after 10 minutes; restart DSH or ignore it. |
+| `Auto review rejected tool "lan_exec"` | A session running the experimental Auto review permission mode asks a reviewer model before every tool call; an arbitrary remote shell is a plausible refusal, and a denial is final under `approval-policy never`. | This is a session policy, not a mesh failure: switch that session to a normal permission mode (or answer the approval), or use `lan_delegate`. `lan_peers`/`lan_delegate` normally pass because they name a peer and a task rather than a shell command. The peer's `allowExec` still applies. |
 
 ## Verification
 
@@ -501,7 +521,7 @@ cd /absolute/path/to/dsh-lan-mesh
 node --test test/unit.test.mjs test/server.test.mjs test/plugin.test.mjs
 ```
 
-They cover config defaults and token resolution, peer discovery/expiry/resolution, protocol helpers, final-output extraction, per-peer token overrides and configured-address precedence, a real `MeshServer` + `PeerClient` round trip over loopback (including 401, 403 and 404 cases), and the plugin entry itself mounted under a fake Host context — 29 tests.
+They cover config defaults and token resolution, peer discovery/expiry/resolution, protocol helpers, final-output extraction, per-peer token overrides and configured-address precedence, a real `MeshServer` + `PeerClient` round trip over loopback (including 401, 403 and 404 cases), the plugin entry itself mounted under a fake Host context (including live `.volatile()` config reads), and 30 tests in total.
 
 ## Stopping, disabling and uninstalling
 

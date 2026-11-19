@@ -15,7 +15,8 @@
  */
 import { hostname } from 'node:os'
 import { PeerClient } from './lib/client.js'
-import { resolveConfig } from './lib/config.js'
+import { loadConfigSchema } from './lib/config-schema.js'
+import { liveValue, resolveConfig } from './lib/config.js'
 import { Discovery } from './lib/discovery.js'
 import { PeerRegistry } from './lib/peers.js'
 import { PROTO, fingerprint, messageOf, peerId } from './lib/protocol.js'
@@ -24,6 +25,15 @@ import { MeshServer } from './lib/server.js'
 
 export const name = 'lan-mesh'
 export const inject = ['tools']
+
+/**
+ * Optional editable settings schema. When `@deepseek-ai/schemastery` resolves
+ * in this deployment the Loader entry becomes a settings namespace, so
+ * Settings -> Plugins -> dsh-lan-mesh -> Configure offers a form (including the
+ * shared token). When it does not resolve the plugin behaves as before and
+ * keeps its configuration in the profile patch file.
+ */
+export const Config = await loadConfigSchema()
 
 /** Resolve a logger facade without assuming the host exposes one. */
 function makeLogger(ctx) {
@@ -86,6 +96,26 @@ function tool(spec) {
 export function apply(ctx, rawConfig) {
   const log = makeLogger(ctx)
   const config = resolveConfig(rawConfig)
+  // Editable settings are volatile: read them per use so a save applies at once.
+  const liveName = () => {
+    const value = liveValue(rawConfig, 'name')
+    const name = typeof value === 'string' ? value.trim() : ''
+    return name !== '' ? name : config.name
+  }
+  const liveToken = () => {
+    const value = liveValue(rawConfig, 'token')
+    const token = typeof value === 'string' ? value.trim() : ''
+    return token !== '' ? token : config.token
+  }
+  const liveAllowExec = () => {
+    const value = liveValue(rawConfig, 'allowExec')
+    return typeof value === 'boolean' ? value : config.allowExec
+  }
+  const liveConfig = Object.defineProperties({ ...config }, {
+    name: { get: liveName, enumerable: true },
+    token: { get: liveToken, enumerable: true },
+    allowExec: { get: liveAllowExec, enumerable: true },
+  })
   for (const warning of config.warnings) log.warn(`lan-mesh: ${warning}`)
   if (config.tokenSource.startsWith('generated:')) {
     log.warn(`lan-mesh: token file ${config.tokenSource.slice('generated:'.length)} holds the shared token; copy it to the other machines`)
@@ -95,23 +125,24 @@ export function apply(ctx, rawConfig) {
   const registry = new PeerRegistry({
     selfId,
     selfName: config.name,
-    token: config.token,
+    auth: () => fingerprint(liveToken()),
     announceMs: config.announceMs,
   })
   registry.addStatic(config.peers)
 
-  const runner = new TaskRunner(ctx, config, log)
-  const client = new PeerClient({ token: config.token, timeoutMs: config.toolTimeoutMs })
+  const runner = new TaskRunner(ctx, liveConfig, log)
+  const client = new PeerClient({ getToken: liveToken, timeoutMs: config.toolTimeoutMs })
   const server = new MeshServer({
-    config,
+    config: liveConfig,
     runner,
     log,
     info: () => ({
-      name: config.name,
+      name: liveName(),
       platform: config.platform,
       port: config.server ? (server.port || config.port) : 0,
       agent: runner.hasAgentSupport(),
-      exec: config.allowExec,
+      exec: liveAllowExec(),
+      configForm: Config !== undefined,
       runtimes: ctx.get('sessionController') === undefined ? [] : ['dsh'],
     }),
   })
@@ -119,7 +150,7 @@ export function apply(ctx, rawConfig) {
   const beacon = () => ({
     v: PROTO,
     id: selfId,
-    name: config.name,
+    name: liveName(),
     port: server.port || config.port,
     platform: config.platform,
     proto: PROTO,
@@ -127,7 +158,7 @@ export function apply(ctx, rawConfig) {
   const discovery = new Discovery({
     port: config.discoveryPort,
     announceMs: config.announceMs,
-    token: config.token,
+    auth: () => fingerprint(liveToken()),
     beacon,
     log,
     onBeacon: (payload, address) => {
@@ -155,7 +186,7 @@ export function apply(ctx, rawConfig) {
 
   const describeSelf = () => {
     const where = config.server ? `http://${config.bind}:${String(server.port || config.port)}` : 'server disabled'
-    return `This machine: "${config.name}" (${config.platform}, ${where}, token fingerprint ${fingerprint(config.token) || 'none'})`
+    return `This machine: "${liveName()}" (${config.platform}, ${where}, token fingerprint ${fingerprint(liveToken()) || 'none'})`
   }
 
   const peerLine = (peer) => `${peer.name}  [${peer.id}]  ${peer.platform}  http://${peer.host}:${String(peer.port)}  ${peer.source === 'static' ? 'configured' : 'discovered'}  ${peer.online ? 'online' : 'offline'}`

@@ -106,6 +106,35 @@ Token resolution order: `config.token` → `DSH_LAN_TOKEN` → `<DSH_HOME>/lan-m
 (generated with mode 0600 on first run) → in-memory (warning). `lan_peers`
 prints the fingerprint so the machines can be compared.
 
+## Settings page
+
+The bundle declares `Config` so its Loader entry becomes a settings namespace, and
+its browser half registers the bundle row's page in the Plugins sidebar
+(`plugins.row.config`, key `dsh-lan-mesh#lan-mesh`) so the row gets a **Configure**
+control. The page edits three fields: `name`, `token`, `allowExec`.
+
+Two facts drive the implementation:
+
+- The settings service only projects `.volatile()` fields into an editable form.
+  Ordinary fields would be invisible there. The three editable fields are
+  therefore volatile; every other field stays validated-but-YAML-only.
+- A volatile field arrives as an accessor (`{ get() }`), and its value changes in
+  place when the settings page saves. The plugin reads them through `liveValue`
+  on every use (server auth, beacon fingerprint, caller token, `lan_exec` gate,
+  displayed name), so a save re-announces and re-authenticates immediately with
+  no plugin remount and no process restart. Ports and `discover` cannot work that
+  way — they rebind sockets — which is why they stay in the profile patch.
+
+`lib/config-schema.js` resolves `@deepseek-ai/schemastery` through
+`DSH_PROFILE_DIR`, `DSH_HOME/profiles/<profile>`, and the bundle's own location.
+When no route resolves, `Config` is `undefined`: the row keeps working exactly as
+before, `/v1/hello` reports `configForm:false`, and the page explains that the
+configuration lives in the profile patch.
+
+Verified against a scratch profile with a real browser: the page rendered, a save
+wrote `token` and `allowExec` into the profile patch, and the running peer
+switched token fingerprint and `exec` capability without a restart.
+
 ## Security model
 
 - LAN only. Plain HTTP by design; the token is the whole access control.
@@ -129,12 +158,15 @@ prints the fingerprint so the machines can be compared.
 | `lib/server.js` | peer HTTP server and endpoints |
 | `lib/runner.js` | task execution on the peer (Agent drive, final text, exec) |
 | `lib/client.js` | caller-side authenticated fetch |
+| `lib/config-schema.js` | optional `Config` schema (schemastery, resolved through the Host) |
+| `client.js` | browser half: the Plugins page row settings form |
+| `docs/settings-page.png` | screenshot of that form |
 | `test/unit.test.mjs` | config/peers/protocol/extract tests |
 | `test/server.test.mjs` | real MeshServer + PeerClient over loopback |
 | `test/plugin.test.mjs` | `apply()` wiring under a fake Host context |
 
 Tests: `node --test test/unit.test.mjs test/server.test.mjs test/plugin.test.mjs`
-(29 tests, no model or credentials needed).
+(30 tests, no model or credentials needed).
 
 ## Manual verification
 

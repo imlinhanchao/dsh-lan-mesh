@@ -19,7 +19,8 @@
 | 节点发现 | UDP 广播 **7318**（配置项 `discoveryPort`），每 5 秒发一次信标 |
 | 鉴权 | 共享 Bearer token；只有 `GET /v1/ping` 不需要 token |
 | 传输 | 局域网内普通 HTTP + JSON（没有 TLS） |
-| 架构 | 点对点；没有中继、没有中心服务器、没有账号、没有图形面板 |
+| 架构 | 点对点；没有中继、没有中心服务器、没有账号 |
+| 设置界面 | 侧栏「插件」里本插件的行支持配置：节点名称、共享 token、`lan_exec` 开关 |
 | 接收方要求 | 想跑 `lan_delegate`，必须运行 Web 或 Desktop profile |
 | 新增工具 | `lan_peers`、`lan_delegate`、`lan_result`、`lan_exec` |
 
@@ -30,7 +31,7 @@
 - **带回最终答案。** 远端智能体空闲后（包括它启动的子代理都结束），最后一条助手文本和本轮结束原因会发回调用方。
 - **执行原始命令。** `POST /v1/exec` 以对端用户的权限执行一条 shell 命令，返回退出码、stdout 和 stderr，适合做快速能力探测。
 - **告诉模型有哪些机器。** 只要至少有一台节点在线，插件就会在系统提示词里加一行，列出这些节点，模型由此知道可以委派。没有节点时这一行为空，不消耗 token。
-- **macOS、Windows、Linux 通用。** 它不导入任何 `@deepseek-ai/*` 包，也不依赖第三方模块，只用 DSH 自带的 Node 内置模块。
+- **macOS、Windows、Linux 通用。** 它不依赖第三方模块，只用 DSH 自带的 Node 内置模块；唯一可选的 `@deepseek-ai` 导入是宿主自己的 `schemastery`，只用来生成设置表单——解析不到时插件照常加载，只是没有表单。
 
 ## 它不做什么
 
@@ -42,7 +43,7 @@
 - **没有 `/lan` 聊天命令。** 由本机模型去调那四个工具，你照常跟模型说话。
 - **没有远程桌面、不能控制屏幕。**
 - **没有文件传输工具。** 远端智能体可以读写它自己机器上的文件、把文字结果带回来，但机器之间没有文件同步。（你当然可以自己通过 `lan_exec` 跑 `scp`/`rsync`。）
-- **没有图形面板或设置页。** 这个版本只有 Host 端（Host-only），配置写在 profile 的 YAML 里。
+- **设置界面只覆盖三个字段。** 只有节点名称、共享 token、`lan_exec` 开关能在侧栏「插件」的本插件页里改；端口、发现、静态节点、超时等仍然写在 profile 的 YAML 里。
 - **不共享对话上下文。** 远端智能体看不到调用方的上下文、历史记录和文件，所以任务必须自带全部信息。
 - **没有取消工具，也没有任务队列。** 没有工具可以取消正在跑的远端回合；任务记录只存在内存里（保留 2 小时，最多 100 条，重启即丢）。
 - **不会绕过审批。** 对端自己的审批策略照常生效。如果委派的任务需要审批而没有人点，它就会卡在对端。
@@ -123,7 +124,9 @@ Get-Content (Join-Path $(if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $
 
 把这个字符串复制到其他每台机器——可以写进同一个 token 文件（macOS/Linux：先 `mkdir -p`，再 `printf '%s\n' '<token>' > ...`，最后 `chmod 600`；Windows：用 `Set-Content -NoNewline`），也可以写成配置里的 `token`，或者设成 `DSH_LAN_TOKEN` 环境变量。三种方式在 [docs/SETUP.md](docs/SETUP.md#step-2-share-one-token)（英文）里都有详细步骤。
 
-**5. 在 token 变过的机器上重启 DSH。** token 只在启动时读取一次。
+**5. 在 token 变过的机器上重启 DSH。** token 只在插件启动时读取一次。
+
+> 小技巧（带 HMR 的 Web/Desktop）：只改 token 或 `name` 时不必重启整个 App。在 profile 的 `cordis.patch.yml` 里加/改一条 `lan-mesh` 行覆盖（见[配置](#配置)），保存后这个插件会被热重载，从而重新读取 token 文件，几秒内就会用新名字重新广播。
 
 **6. 验证。** 在每台机器上执行：
 
@@ -192,6 +195,22 @@ curl -s http://127.0.0.1:7317/v1/ping
 4. 只存在内存里——如果文件写不进去，会生成一个随机 token 并给出警告。在配置好某个持久来源之前，其他节点无法通过鉴权。
 
 每台机器首次运行都会生成自己的 token，所以刚装好的机器之间**不能**互相鉴权，必须把同一个 token 铺到所有机器（例外：给静态节点条目单独写 `token`，对该节点的所有调用都会用它）。`lan_peers` 会打印每台机器的部分 token 指纹（`sha256(token)` 的前 16 个十六进制字符），方便在不泄露 token 的前提下比对。
+
+### 设置界面（侧栏「插件」）
+
+在 Web/Desktop 界面里配置一台机器最省事的方式：侧栏打开**插件**，在**已安装插件**里打开**内网 DSH 互联**，在 `lan-mesh` 那一行点**配置**。页面会提示这些值会写进本机 profile 的 `cordis.patch.yml`。
+
+![内网 DSH 互联的设置行页面](docs/settings-page.png)
+
+| 字段 | 作用 |
+|---|---|
+| 节点名称 | 其它机器的 `lan_peers` 里显示的名字；留空用 `DSH_LAN_NAME` 或主机名。 |
+| 共享 token | 内网共享密钥。它会覆盖 `DSH_LAN_TOKEN` 与 token 文件；留空则保留这两种回退。页面会显示 token 的 16 位指纹，两台机器不用暴露 token 就能对比。 |
+| 允许远端执行 shell 命令 | 打开/关闭本机的 `/v1/exec`（`lan_exec`）。委派任务（`lan_delegate`）不受影响。 |
+
+这三个字段声明为 `.volatile()`，所以**保存后立即生效**：这台机器会用新名字重新广播、并开始接受新 token，不需要重启 DSH。其余字段（端口、静态节点、`discover`、`taskCwd`、`toolTimeoutMs`）会被校验，但仍写在 YAML 里——改端口必须重新绑定套接字。
+
+表单只在宿主能提供可编辑配置时出现（需要宿主自己的 `@deepseek-ai/schemastery`）；否则页面会说明原因并让你改 YAML。
 
 ### 环境变量
 
@@ -434,6 +453,7 @@ macOS 在服务器第一次监听时会弹窗询问 `node` 是否接受入站连
 | `lan_peers` 里 `agent=no` | 对端 profile 不能承载会话。 | 让那台机器以 Web/Desktop 运行 DSH。 |
 | 远端答案为空 | 远端智能体没产出文本（或回合失败）。 | 去对端图形界面看那个会话；结果里会带结束原因/错误。 |
 | 同一台机器出现两条记录 | 节点 ID 由名字 + 主机名 + 端口派生，旧的离线信标还没清掉。 | 等 10 分钟旧条目自动消失，或重启 DSH。 |
+| `Auto review rejected tool "lan_exec"` | 该会话开着实验性的 Auto review 权限模式：每次工具调用前让审查模型判断，任意远端 shell 很容易被拒；在 `approval-policy never` 下拒绝是最终的。 | 这是会话权限策略，不是互联失败：把该会话换成普通权限模式（或人工批准），或者改用 `lan_delegate`。`lan_peers`/`lan_delegate` 一般能过，因为它们点名的是节点和任务而不是 shell 命令。对端的 `allowExec` 仍然有效。 |
 
 ## 验证
 
@@ -501,7 +521,7 @@ cd /absolute/path/to/dsh-lan-mesh
 node --test test/unit.test.mjs test/server.test.mjs test/plugin.test.mjs
 ```
 
-覆盖配置默认值与 token 解析、节点发现/过期/解析、协议辅助函数、最终文本提取、单节点 token 覆盖与配置地址优先，通过回环地址跑真实的 `MeshServer` + `PeerClient` 往返（包含 401、403、404 场景），以及在伪造 Host 上下文里挂载插件入口，共 29 个测试。
+覆盖配置默认值与 token 解析、节点发现/过期/解析、协议辅助函数、最终文本提取、单节点 token 覆盖与配置地址优先，通过回环地址跑真实的 `MeshServer` + `PeerClient` 往返（包含 401、403、404 场景），在伪造 Host 上下文里挂载插件入口（含 `.volatile()` 配置的实时读取），共 30 个测试。
 
 ## 停止、禁用与卸载
 

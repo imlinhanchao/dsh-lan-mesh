@@ -81,6 +81,8 @@ If the log has no `lan-mesh:` lines, the bundle row is not active. Re-run the in
 
 ## Step 2: Share one token
 
+> Once every machine runs this version, the settings page is the shortest route: **Plugins → LAN mesh peers → Configure → Shared token → Save**. It writes the row's `token` config (visible in the profile patch) and applies it live. The file, environment variable and YAML routes below remain valid and are what the page falls back to when it is not available.
+
 The simple setup is the **same** shared token on every machine. On first run each machine generates its own random token, so freshly installed machines cannot authenticate each other until you make the tokens equal — or you give static peer entries their own `token` (see [Step 4](#step-4-static-peers-optional)).
 
 Pick one machine as the source (for example mac-mini) and read its token.
@@ -102,6 +104,12 @@ Get-Content (Join-Path $dshHome "lan-mesh\token")
 ```
 
 If that file does not exist, either the plugin has not started yet or one of the other sources is already configured. Look for `token: ...` in the `lan-mesh` row of `profiles/<profile>/cordis.patch.yml`, or check `DSH_LAN_TOKEN` in the environment of the DSH process. The startup log names the winning source: `token config`, `token env:DSH_LAN_TOKEN`, `token file:<path>`, `token generated:<path>` or `token memory`.
+
+### Option 0 (recommended once the plug-in is running): the settings page
+
+With DSH running, open **Plugins** in the sidebar, open **LAN mesh peers** under **Installed plugins**, and press **Configure** on the `lan-mesh` row. Paste the same shared token into **Shared token** on every machine and press **Save**. These fields are volatile, so the change applies immediately — no restart — and the page shows the token fingerprint, which must match on all machines.
+
+The rest of this section is for machines where the settings page is unavailable (an older Host, a headless profile, or a deployment that cannot expose editable configuration).
 
 ### Install the token on the other machines (three options)
 
@@ -152,7 +160,7 @@ A `token` in config wins over the environment variable and over the token file.
 
 ### Restart and compare fingerprints
 
-Restart DSH on every machine whose token changed, then compare. The easiest check is `lan_peers` in each machine's DSH session: the first output line contains the machine's token fingerprint, `token fingerprint <16 hex characters>`. All machines must show the same 16 characters.
+Restart DSH on every machine whose token changed (not needed after a settings-page save), then compare. The easiest check is `lan_peers` in each machine's DSH session: the first output line contains the machine's token fingerprint, `token fingerprint <16 hex characters>`. All machines must show the same 16 characters.
 
 You can also compute the fingerprint locally:
 

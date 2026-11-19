@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 
-import { resolveConfig, DEFAULTS } from '../lib/config.js'
+import { liveValue, resolveConfig, unwrapVolatile, DEFAULTS } from '../lib/config.js'
 import { PeerRegistry } from '../lib/peers.js'
 import { bearerOf, fingerprint, peerId, tokenEquals } from '../lib/protocol.js'
 import { extractFinalOutput } from '../lib/runner.js'
@@ -46,6 +46,23 @@ test('config: static peers validate port and keep per-peer tokens', () => {
   assert.deepEqual(config.peers, [{ name: 'mac', host: '10.0.0.2', port: 9000, token: 'other' }])
 })
 
+test('volatile config fields are read through their accessor', () => {
+  const accessor = { value: 'first', get() { return this.value } }
+  const raw = { name: accessor, token: { get: () => 'live-token' }, allowExec: true, port: 7317 }
+  assert.equal(liveValue(raw, 'name'), 'first')
+  accessor.value = 'renamed'
+  assert.equal(liveValue(raw, 'name'), 'renamed')
+  assert.equal(liveValue(raw, 'token'), 'live-token')
+  assert.equal(liveValue(raw, 'allowExec'), true)
+  assert.equal(liveValue(raw, 'missing'), undefined)
+  const plain = unwrapVolatile(raw)
+  assert.equal(plain.name, 'renamed')
+  assert.equal(plain.token, 'live-token')
+  assert.equal(plain.port, 7317)
+  // A broken accessor falls back instead of throwing.
+  assert.equal(liveValue({ name: { get() { throw new Error('gone') } } }, 'name'), undefined)
+})
+
 test('protocol: fingerprint is stable and non-reversible, token compare is exact', () => {
   assert.equal(fingerprint('secret'), fingerprint('secret'))
   assert.notEqual(fingerprint('secret'), fingerprint('secret2'))
@@ -61,7 +78,7 @@ test('protocol: fingerprint is stable and non-reversible, token compare is exact
 test('peers: discovery filters self, foreign tokens and malformed beacons', () => {
   const token = 'shared'
   const auth = fingerprint(token)
-  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', token, announceMs: 1000 })
+  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', auth: () => fingerprint(token), announceMs: 1000 })
   assert.equal(registry.observe({ id: 'me', name: 'x', port: 1, auth }, '10.0.0.2').reason, 'self')
   assert.equal(registry.observe({ id: 'p1', name: 'x', port: 1, auth: 'wrong' }, '10.0.0.2').accepted, false)
   assert.equal(registry.observe({ id: 'p2', name: '', port: 1, auth }, '10.0.0.2').accepted, false)
@@ -74,7 +91,7 @@ test('peers: discovery filters self, foreign tokens and malformed beacons', () =
 })
 
 test('peers: a configured address stays authoritative over a beacon', () => {
-  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', token: 't', announceMs: 1000 })
+  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', auth: () => fingerprint('t'), announceMs: 1000 })
   registry.addStatic([{ name: 'mac-mini', host: '192.168.1.9', port: 7317 }])
   registry.observe({ id: 'other', name: 'mac-mini', port: 9999, auth: fingerprint('t') }, '10.9.9.9')
   const peer = registry.resolve('mac-mini').peer
@@ -85,7 +102,7 @@ test('peers: a configured address stays authoritative over a beacon', () => {
 })
 
 test('peers: configured peers absorb beacons with the same name', () => {
-  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', token: 't', announceMs: 1000 })
+  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', auth: () => fingerprint('t'), announceMs: 1000 })
   registry.addStatic([{ name: 'mac-mini', host: '192.168.1.9', port: 7317 }])
   const before = registry.resolve('mac-mini').peer
   assert.equal(before.source, 'static')
@@ -97,7 +114,7 @@ test('peers: configured peers absorb beacons with the same name', () => {
 })
 
 test('peers: expiry and helpful resolve errors', () => {
-  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', token: 't', announceMs: 100 })
+  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', auth: () => fingerprint('t'), announceMs: 100 })
   registry.observe({ id: 'p1', name: 'legacy-pc', port: 7317, auth: fingerprint('t') }, '10.0.0.4')
   assert.equal(registry.list(0).length, 1)
   assert.equal(registry.online(now()).length, 1)
@@ -107,7 +124,7 @@ test('peers: expiry and helpful resolve errors', () => {
 })
 
 test('peers: ambiguous prefix is rejected with the candidates', () => {
-  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', token: 't', announceMs: 10_000 })
+  const registry = new PeerRegistry({ selfId: 'me', selfName: 'me', auth: () => fingerprint('t'), announceMs: 10_000 })
   registry.observe({ id: 'a', name: 'mac-mini', port: 7317, auth: fingerprint('t') }, '10.0.0.5')
   registry.observe({ id: 'b', name: 'mac-studio', port: 7317, auth: fingerprint('t') }, '10.0.0.6')
   assert.match(registry.resolve('mac').error, /matches several/)

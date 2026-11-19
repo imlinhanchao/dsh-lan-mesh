@@ -10,7 +10,7 @@ import { after, test } from 'node:test'
 import { apply } from '../index.js'
 
 const TOKEN = 'plugin-entry-token'
-const PORT = 17417
+const PORT = 17431
 
 /** Minimal stand-in for the Cordis context the Host passes to a plugin. */
 function fakeContext() {
@@ -67,7 +67,7 @@ apply(ctx, { name: 'plugin-entry-peer', port: PORT, bind: '127.0.0.1', token: TO
 async function waitForServer(timeoutMs = 3000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    if (ctx.logs.some((line) => line.includes(`:${String(PORT)}`))) return
+    if (ctx.logs.some((line) => line.includes('peer server listening'))) return
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
   throw new Error(`peer server did not start; logs:\n${ctx.logs.join('\n')}`)
